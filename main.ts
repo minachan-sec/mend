@@ -1034,4 +1034,20 @@ function main() {
   process.exitCode = 0;
 }
 
-main();
+// ------------------------------------------------------- trial hand-over
+
+// When the harness runs this file it sets MAKEFUN_ENV_URL: then this
+// process is the trial driver, not a CLI run, and the trial is handed over
+// to runner.ts beside this file. Without the variable, mend is the CLI.
+if (process.env.MAKEFUN_ENV_URL) {
+  import("./runner.ts")
+    .then(function (runner) {
+      return runner.runTrial(process.env.MAKEFUN_ENV_URL);
+    })
+    .catch(function (err) {
+      console.error(err);
+      process.exitCode = 1;
+    });
+} else {
+  main();
+}
