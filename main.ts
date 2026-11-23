@@ -38,6 +38,11 @@ function isBlank(s) {
   return s.trim() === "";
 }
 
+// Remove surrounding spaces (only spaces: section 8 says "spaces").
+function stripSpaces(s) {
+  return s.replace(/^ +/, "").replace(/ +$/, "");
+}
+
 // A file's own line model: its break (CRLF when its first line feed follows
 // a carriage return, else LF), its lines split at that break, and whether
 // its text ends with the break.
@@ -369,7 +374,12 @@ function applyHunks(model, hunks, strict) {
     const O = on.O;
     const entries = on.entries;
     if (O.length === 0) {
-      const pos = Math.min(hunk.a + d, lines.length);
+      // Inserted after the first A + d lines: clamped to the file at both
+      // ends (SPEC: "all of them when the file has fewer"; a negative count
+      // names no lines, so the insertion is at the top).
+      let pos = hunk.a + d;
+      if (pos < 0) pos = 0;
+      if (pos > lines.length) pos = lines.length;
       const atEnd = pos === lines.length;
       const newLines = buildReplacement(lines, pos, O, entries, 0);
       for (let k = newLines.length - 1; k >= 0; k--) lines.splice(pos, 0, newLines[k]);
@@ -485,15 +495,15 @@ function parseV4A(lines) {
   for (let i = begin + 1; i < end; i++) {
     const line = lines[i];
     if (line.startsWith("*** Add File: ")) {
-      startSection("add", line.slice("*** Add File: ".length).trim(), i + 1);
+      startSection("add", stripSpaces(line.slice("*** Add File: ".length)), i + 1);
       continue;
     }
     if (line.startsWith("*** Delete File: ")) {
-      startSection("delete", line.slice("*** Delete File: ".length).trim(), i + 1);
+      startSection("delete", stripSpaces(line.slice("*** Delete File: ".length)), i + 1);
       continue;
     }
     if (line.startsWith("*** Update File: ")) {
-      startSection("update", line.slice("*** Update File: ".length).trim(), i + 1);
+      startSection("update", stripSpaces(line.slice("*** Update File: ".length)), i + 1);
       continue;
     }
     if (cur === null) {
@@ -529,11 +539,11 @@ function parseV4A(lines) {
         const t = raw[k].text;
         const num = raw[k].num;
         if (k === 0 && t.startsWith("*** Move to: ")) {
-          moveTo = t.slice("*** Move to: ".length).trim();
+          moveTo = stripSpaces(t.slice("*** Move to: ".length));
           continue;
         }
         if (t.startsWith("@@")) {
-          const anchorText = t.slice(2).trim();
+          const anchorText = stripSpaces(t.slice(2));
           chunk = { anchor: anchorText === "" ? null : anchorText, eof: false, body: [] };
           chunks.push(chunk);
           continue;
@@ -997,33 +1007,39 @@ function main() {
   });
 
   if (!opts.check) {
+    // Removals first, then writes: a path deleted by the patch can be
+    // recreated (or created under) by the same patch without the old file
+    // standing in the way of its directory.
     for (let i = 0; i < changeLines.length; i++) {
       const text = changeLines[i].text;
       if (text.startsWith("D ")) {
-        const p = text.slice(2);
         try {
-          fs.unlinkSync(path.join(root, p));
+          fs.unlinkSync(path.join(root, text.slice(2)));
         } catch (e) {
           /* already gone */
         }
       } else if (text.startsWith("R ")) {
-        const parts = text.slice(2).split(" -> ");
-        const oldP = parts[0];
-        const newP = parts.slice(1).join(" -> ");
+        const oldP = text.slice(2).split(" -> ")[0];
         try {
           fs.unlinkSync(path.join(root, oldP));
         } catch (e) {
           /* already gone */
         }
-        const full = path.join(root, newP);
-        fs.mkdirSync(path.dirname(full), { recursive: true });
-        fs.writeFileSync(full, state.get(newP), "utf8");
-      } else {
-        const p = text.slice(2);
-        const full = path.join(root, p);
-        fs.mkdirSync(path.dirname(full), { recursive: true });
-        fs.writeFileSync(full, state.get(p), "utf8");
       }
+    }
+    for (let i = 0; i < changeLines.length; i++) {
+      const text = changeLines[i].text;
+      if (text.startsWith("D ")) continue;
+      let p;
+      if (text.startsWith("R ")) {
+        const parts = text.slice(2).split(" -> ");
+        p = parts.slice(1).join(" -> ");
+      } else {
+        p = text.slice(2);
+      }
+      const full = path.join(root, p);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, state.get(p), "utf8");
     }
   }
 
